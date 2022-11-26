@@ -1,5 +1,4 @@
-import { graphRegistry } from "./GraphRegistry";
-import { GraphOperation, GraphOperationDescriptor, GraphOperationID, GraphTypeMap, isGraphReference } from "./GraphTypes";
+import { GraphFunctions, GraphInputType, GraphNode, GraphNodeID, GraphNodeReference, GraphOutputType, isGraphNode, isGraphNodeReference } from "./GraphTypes";
 
 export enum GraphExecutionState {
     NotStarted,
@@ -8,70 +7,75 @@ export enum GraphExecutionState {
     Error
 }
 
-interface GraphOperationState<GOD extends GraphOperationDescriptor = GraphOperationDescriptor> {
-    operation: GraphOperation<GOD>;
+export interface GraphNodeState<GFS extends GraphFunctions, Type extends keyof GFS = keyof GFS> {
+    node: GraphNode<GFS,Type>;
     status: GraphExecutionState;
-    output?: GraphTypeMap[GOD["output"]];
+    output?: GraphOutputType<GFS[Type]>;
     error?: any;
 }
 
-export class GraphExecutor {
+export class GraphExecutor<GFS extends GraphFunctions> {
 
-    public readonly operations = new Map<GraphOperationID, GraphOperationState>();
+    private readonly nodes = new Map<GraphNodeID, GraphNodeState<GFS>>();
 
-    get(id: GraphOperationID, create: true): GraphOperationState
-    get(id: GraphOperationID, create?: false): GraphOperationState | undefined
-    get(id: GraphOperationID, create = false): GraphOperationState | undefined {
-        let state = this.operations.get(id);
-        if (create && state === undefined) {
-            state = this.add(JSON.parse(id));
-        }
-        return state;
+    constructor(private readonly functions: GFS) {
     }
 
-    has(id: GraphOperationID) {
-        return this.get(id) !== undefined;
-    }
-
-    add(operation: GraphOperation): GraphOperationState {
-        const id = JSON.stringify(operation);
-        let state = this.operations.get(id);
+    public getState(idOrNode: GraphNodeID | GraphNode<GFS>): GraphNodeState<GFS> {
+        const id = typeof idOrNode === "string" ? idOrNode : JSON.stringify(idOrNode);
+        let state = this.nodes.get(id);
         if (state === undefined) {
-            this.operations.set(id, state = { operation, status: GraphExecutionState.NotStarted });
+            const node = typeof idOrNode === "string" ? JSON.parse(idOrNode) as GraphNode<GFS> : idOrNode;
+            if (!isGraphNode(node)) {
+                throw new Error(`Expected valid GraphNode: ${id}`);
+            }
+            state = { node, status: GraphExecutionState.NotStarted };
+            this.nodes.set(id, state);
         }
         return state;
+    }
+
+    public setState(node: GraphNode<GFS>, newState: Partial<GraphNodeState<GFS>>) {
+        const oldState = this.getState(node);
+        Object.assign(oldState, newState);
+        const markSuccessorsDirty = JSON.stringify(newState.output) !== JSON.stringify(oldState.output);
+        if (markSuccessorsDirty) {
+            throw new Error("not yet implemented");
+        }
+    }
+
+    public create<Type extends keyof GFS>(
+        type: Type,
+        inputs: {
+            [Name in keyof GraphInputType<GFS[Type]>]: GraphOutputType<GFS[Type]> | GraphNode<GFS>
+        }
+    ): GraphNode<GFS,Type> {
+        const node = ({
+            type,
+            inputs: Object.fromEntries(Object.entries(inputs).map(([key,value]) => [key, isGraphNode(value) ? { reference: JSON.stringify(value) } as GraphNodeReference : value] )) as any
+        });
+        this.getState(node);
+        return node;
     }
 
     private areAllFinished() {
-        return [...this.getOperationsByState(GraphExecutionState.Finished)].length === this.operations.size;
+        return [...this.getOperationsByState(GraphExecutionState.Finished)].length === this.nodes.size;
     }
 
-    private getPredecessors(operation: GraphOperation): GraphOperationState[] {
-        let result: GraphOperationState[] = [];
-        for (let name in operation.inputs) {
-            let input = operation.inputs[name];
-            if (isGraphReference(input)) {
-                result.push(this.get(input.reference, true));
-            }
-        }
-        return result;
-    }
-
-    private *getOperationsByState(state: GraphExecutionState, opstates = this.operations.values()) {
-        for (let opstate of opstates) {
-            if (opstate.status === state) {
-                yield opstate;
+    private *getOperationsByState(state: GraphExecutionState, opstates = this.nodes.values()) {
+        for (let nodeState of opstates) {
+            if (nodeState.status === state) {
+                yield nodeState;
             }
         }
     }
 
-    getInputsIfFinished(operation: GraphOperation) {
+    private getInputsIfFinished(node: GraphNode<GFS>) {
         let inputs: { [name: string]: any } = {};
-        for (let name in operation.inputs) {
-            let input = operation.inputs[name];
-            if (isGraphReference(input)) {
-                debugger;
-                let state = this.get(input.reference, true);
+        for (let name in node.inputs) {
+            let input = node.inputs[name];
+            if (isGraphNodeReference(input)) {
+                let state = this.getState(input.reference);
                 if (state.status === GraphExecutionState.Finished) {
                     inputs[name] = state.output!;
                 }
@@ -86,7 +90,10 @@ export class GraphExecutor {
         return inputs;
     }
 
-    public async executeUntilFinished() {
+    /**
+     * Returns a promise that will resolve when the entire graph is executed or reject if any node throws.
+     */
+    public async execute() {
         return new Promise((resolve, reject) => {
             this.executeFrame(resolve, reject);
         });
@@ -99,22 +106,20 @@ export class GraphExecutor {
         if (this.areAllFinished()) {
             return finished(undefined);
         }
-        for (let opstate of this.getOperationsByState(GraphExecutionState.NotStarted)) {
-            const inputs = this.getInputsIfFinished(opstate.operation);
+        for (let nodeState of this.getOperationsByState(GraphExecutionState.NotStarted)) {
+            const inputs = this.getInputsIfFinished(nodeState.node);
             if (inputs) {
-                opstate.status = GraphExecutionState.Started;
-                console.log("Starting: ", { id: JSON.stringify(opstate.operation) });
-                const handler = graphRegistry.getOperationHandler(opstate.operation.type);
-                handler(inputs, this)
+                nodeState.status = GraphExecutionState.Started;
+                const handler = this.functions[nodeState.node.type];
+                handler(inputs)
                     .catch(e => {
-                        opstate.status = GraphExecutionState.Error;
-                        opstate.error = e;
+                        nodeState.status = GraphExecutionState.Error;
+                        nodeState.error = e;
                         error(e);
                     })
                     .then(result => {
-                        console.log("Finished: ", { id: JSON.stringify(opstate.operation), result });
-                        opstate.status = GraphExecutionState.Finished;
-                        opstate.output = result!;
+                        nodeState.status = GraphExecutionState.Finished;
+                        nodeState.output = result!;
                         this.executeFrame(finished, error);
                     })
             }
