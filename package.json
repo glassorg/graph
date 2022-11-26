@@ -1,0 +1,34 @@
+{
+  "name": "@glas/graph",
+  "version": "0.0.0",
+  "description": "Generalized dependency graph creation and execution suitable for parallel execution in worker threads",
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "gtest lib",
+    "debug": "tsc && node --inspect-brk node_modules/@glas/test/gtest.js lib",
+    "deploy": "npm version patch && npm publish",
+    "watch": "run-p 'watch:*'",
+    "watch:build": "tsc -w",
+    "watch:test": "nodemon -w lib -w src -w external -e js,ts,is,ion --delay 200ms -x npm run test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/glassorg/graph.git"
+  },
+  "author": "krisnye@gmail.com",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/glassorg/graph/issues"
+  },
+  "homepage": "https://github.com/glassorg/graph#readme",
+  "devDependencies": {
+    "@types/node": "^18.11.9",
+    "nodemon": "^2.0.20",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^4.9.3"
+  },
+  "dependencies": {
+    "@glas/test": "^1.0.4"
+  }
+}

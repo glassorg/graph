@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "declaration": true,
+    "outDir": "./lib",
+    "rootDir": "./src",
+    "preserveWatchOutput": true,
+    "strict": true,
+  },
+  "exclude": ["lib", "node_modules"]
+}
