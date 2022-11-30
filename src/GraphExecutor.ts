@@ -1,42 +1,50 @@
-import { GraphFunctions, GraphInputType, GraphNode, GraphNodeID, GraphNodeReference, GraphOutputType, isGraphNode, isGraphNodeReference } from "./GraphTypes";
+import { GraphFunctions, GraphInputType, GraphOperation, GraphNodeID, GraphNodeOfOutputType, GraphReference, GraphOutputType, isGraphOperation, isGraphReference, GraphInputTypeOrNode } from "./GraphTypes";
 
-export enum GraphExecutionState {
-    NotStarted,
-    Started,
-    Finished,
-    Error
+export enum GraphNodeState {
+    NotStarted = "NotStarted",
+    Started = "Started",
+    Finished = "Finished",
+    Error = "Error"
 }
 
-export interface GraphNodeState<GFS extends GraphFunctions, Type extends keyof GFS = keyof GFS> {
-    node: GraphNode<GFS,Type>;
-    status: GraphExecutionState;
-    output?: GraphOutputType<GFS[Type]>;
+export interface GraphNode<GFS extends GraphFunctions, Type extends keyof GFS = keyof GFS> {
+    operation: GraphOperation<GFS,Type>;
+    state: GraphNodeState;
+    output?: GraphOutputType<GFS,Type>;
     error?: any;
+    // if there is a child, we defer to that.
+    child?: GraphNode<GFS>;
+    parent?: GraphNode<GFS>;
 }
+
+
+process.on("unhandledRejection", (reason, promise) => {
+    console.log("!!!!!!!!!!!! unhandledRejection", {reason, promise});
+});
 
 export class GraphExecutor<GFS extends GraphFunctions> {
 
-    private readonly nodes = new Map<GraphNodeID, GraphNodeState<GFS>>();
+    private readonly nodes = new Map<GraphNodeID, GraphNode<GFS>>();
 
     constructor(private readonly functions: GFS) {
     }
 
-    public getState(idOrNode: GraphNodeID | GraphNode<GFS>): GraphNodeState<GFS> {
-        const id = typeof idOrNode === "string" ? idOrNode : JSON.stringify(idOrNode);
+    public getNode(idOrOp: GraphNodeID | GraphOperation<GFS>): GraphNode<GFS> {
+        const id = typeof idOrOp === "string" ? idOrOp : JSON.stringify(idOrOp);
         let state = this.nodes.get(id);
         if (state === undefined) {
-            const node = typeof idOrNode === "string" ? JSON.parse(idOrNode) as GraphNode<GFS> : idOrNode;
-            if (!isGraphNode(node)) {
+            const node = typeof idOrOp === "string" ? JSON.parse(idOrOp) as GraphOperation<GFS> : idOrOp;
+            if (!isGraphOperation(node)) {
                 throw new Error(`Expected valid GraphNode: ${id}`);
             }
-            state = { node, status: GraphExecutionState.NotStarted };
+            state = { operation: node, state: GraphNodeState.NotStarted };
             this.nodes.set(id, state);
         }
         return state;
     }
 
-    public setState(node: GraphNode<GFS>, newState: Partial<GraphNodeState<GFS>>) {
-        const oldState = this.getState(node);
+    public setNode(operation: GraphOperation<GFS>, newState: Partial<GraphNode<GFS>>) {
+        const oldState = this.getNode(operation);
         Object.assign(oldState, newState);
         const markSuccessorsDirty = JSON.stringify(newState.output) !== JSON.stringify(oldState.output);
         if (markSuccessorsDirty) {
@@ -46,45 +54,46 @@ export class GraphExecutor<GFS extends GraphFunctions> {
 
     public create<Type extends keyof GFS>(
         type: Type,
-        inputs: {
-            [Name in keyof GraphInputType<GFS[Type]>]: GraphOutputType<GFS[Type]> | GraphNode<GFS>
-        }
-    ): GraphNode<GFS,Type> {
+        ...inputs: GraphInputTypeOrNode<GFS,GraphInputType<GFS,Type>> & any[]
+    ): GraphOperation<GFS,Type> {
         const node = ({
             type,
-            inputs: Object.fromEntries(Object.entries(inputs).map(([key,value]) => [key, isGraphNode(value) ? { reference: JSON.stringify(value) } as GraphNodeReference : value] )) as any
+            inputs: (inputs as any).map((value: any) => {
+                if (isGraphOperation(value)) {
+                    let reference = JSON.stringify(this.create(value.type, ...value.inputs as any));
+                    return { reference }
+                }
+                else {
+                    return value;
+                }
+            })
         });
-        this.getState(node);
+        this.getNode(node);
         return node;
     }
 
     private areAllFinished() {
-        return [...this.getOperationsByState(GraphExecutionState.Finished)].length === this.nodes.size;
+        return this.getNodesByState(GraphNodeState.Finished).length === this.nodes.size;
     }
 
-    private *getOperationsByState(state: GraphExecutionState, opstates = this.nodes.values()) {
-        for (let nodeState of opstates) {
-            if (nodeState.status === state) {
-                yield nodeState;
-            }
-        }
+    public getNodesByState<State extends GraphNodeState>(state: State): GraphNode<GFS>[] {
+        return [...this.nodes.values()].filter(node => node.state === state);
     }
 
-    private getInputsIfFinished(node: GraphNode<GFS>) {
-        let inputs: { [name: string]: any } = {};
-        for (let name in node.inputs) {
-            let input = node.inputs[name];
-            if (isGraphNodeReference(input)) {
-                let state = this.getState(input.reference);
-                if (state.status === GraphExecutionState.Finished) {
-                    inputs[name] = state.output!;
+    private getInputsIfFinished(node: GraphOperation<GFS>) {
+        let inputs: any[] = [];
+        for (let input of node.inputs as any[]) {
+            if (isGraphReference(input)) {
+                let state = this.getNode(input.reference);
+                if (state.state === GraphNodeState.Finished) {
+                    inputs.push(state.output!);
                 }
                 else {
                     return undefined;
                 }
             }
             else {
-                inputs[name] = input;
+                inputs.push(input);
             }
         }
         return inputs;
@@ -94,7 +103,7 @@ export class GraphExecutor<GFS extends GraphFunctions> {
      * Returns a promise that will resolve when the entire graph is executed or reject if any node throws.
      */
     public async execute() {
-        return new Promise((resolve, reject) => {
+        return new Promise<boolean>((resolve, reject) => {
             this.executeFrame(resolve, reject);
         });
     }
@@ -102,25 +111,50 @@ export class GraphExecutor<GFS extends GraphFunctions> {
     /**
      * start execution of all operations which are not awaiting other operations.
      */
-    private executeFrame(finished: (value: void) => void, error: (e: any) => void) {
+    private async executeFrame(finished: (value: boolean) => void, error: (e: any) => void) {
+        let DEBUG = false;
         if (this.areAllFinished()) {
-            return finished(undefined);
+            return finished(true);
         }
-        for (let nodeState of this.getOperationsByState(GraphExecutionState.NotStarted)) {
-            const inputs = this.getInputsIfFinished(nodeState.node);
+        for (let nodeState of this.getNodesByState(GraphNodeState.NotStarted)) {
+            const inputs = this.getInputsIfFinished(nodeState.operation);
             if (inputs) {
-                nodeState.status = GraphExecutionState.Started;
-                const handler = this.functions[nodeState.node.type];
-                handler(inputs)
-                    .catch(e => {
-                        nodeState.status = GraphExecutionState.Error;
+                nodeState.state = GraphNodeState.Started;
+                const handler = this.functions[nodeState.operation.type];
+                if (DEBUG) {
+                    console.log("Started  " + JSON.stringify(nodeState.operation.type));
+                }
+                handler(...inputs)
+                    .then((result) => {
+                        // console.log("====> RESULT: " + JSON.stringify(nodeState.operation), result);
+                        // if we return a thing.
+                        if (isGraphOperation(result)) {
+                            // this becomes a child node.
+                            let childOperation = this.create(result.type, ...result.inputs as any);
+                            let childNode = this.getNode(childOperation);
+                            // bond parent to child
+                            childNode.parent = nodeState;
+                            nodeState.child = childNode;
+                        }
+                        else {
+                            // mark self and any ancestors finished
+                            for (let selfOrAncestor: GraphNode<GFS> | undefined = nodeState; selfOrAncestor != null; selfOrAncestor = selfOrAncestor.parent) {
+                                selfOrAncestor.state = GraphNodeState.Finished;
+                                selfOrAncestor.output = result!;
+                            }
+                        }
+                        if (DEBUG) {
+                            console.log("STATE", [...this.nodes.values()].map(o => String(o.operation.type) + " -> " + o.state));
+                            console.log("Finished " + JSON.stringify(nodeState.operation.type));
+                        }
+                        this.executeFrame(finished, error);
+                    }, (e) => {
+                        if (DEBUG) {
+                            console.log("====> ERROR: " + JSON.stringify(nodeState.operation.type), e);
+                        }
+                        nodeState.state = GraphNodeState.Error;
                         nodeState.error = e;
                         error(e);
-                    })
-                    .then(result => {
-                        nodeState.status = GraphExecutionState.Finished;
-                        nodeState.output = result!;
-                        this.executeFrame(finished, error);
                     })
             }
         }
