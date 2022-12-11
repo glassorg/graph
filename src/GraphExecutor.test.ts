@@ -1,55 +1,60 @@
-// import { strict as assert } from "assert";
+import { strict as assert } from "assert";
 
-// import { GraphNodeState, GraphExecutor } from "./GraphExecutor";
-// import { createGraphOperation, GraphOutputType } from "./GraphTypes";
+import { GraphNodeState, GraphExecutor } from "./GraphExecutor";
+import { createGraphFunctions } from "./GraphTypes";
 
-// const mathFunctions = {
-//     async add(left: number, right: number) { return left + right; },
-//     async addBooleans(left: boolean, right: boolean): Promise<number> { return Number(left) + Number(right); },
-//     async negate(value: number) { return - value; },
-//     async subtract(this, left: number, right: number) {
-//         //  operations can create child operations that it delegates it's result to.
-//         //  we don't get type checking when creating internal operations.
-//         //  I'm OK with that since not sure there's a way to do it which avoids circular dependencies.
-//         return createGraphOperation("add", left, createGraphOperation("negate", right));
-//     },
-//     async throwError(): Promise<string> { throw new Error("bad"); },
-// }
+const mathFunctions = createGraphFunctions<{
+    add(left: number, right: number): number,
+    addBooleans(left: boolean, right: boolean): number,
+    negate(value: number): number,
+    min(...values: number[]): number,
+    minNegate(...values: number[]): number,
+    throwError(): number,
+    getString(): string,
+    subtract(left: number, right: number): number,
+}>(op => ({
+    add: async (left, right) => left + right,
+    addBooleans: async (left, right) => Number(left) + Number(right),
+    negate: async (value) => - value,
+    min: async (...values) => Math.min(...values),
+    minNegate: async (...values) => op("min", ...values.map(value => op("negate", value))),
+    throwError: async () => { throw new Error("bad") },
+    getString: async () => "string",
+    subtract: async (left, right) => op("add", left, op("negate", right))
+}));
 
-// // type CoreType = GraphOutputType<
+export async function testExecutor() {
+    const x = new GraphExecutor(mathFunctions);
+    const op = x.create("add",
+        x.create("negate", 1),
+        x.create("min", 2, 4, 8, 4, 12)
+    );
+    const state = x.getNode(op);
+    await x.execute();
+    assert.equal(state.output, 1);
+}
 
-// export async function testExecutor() {
-//     const x = new GraphExecutor(mathFunctions);
-//     const op = x.create("add",
-//         x.create("negate", 1),
-//         2
-//     );
-//     const state = x.getNode(op);
-//     await x.execute();
-//     assert.equal(state.output, 1);
-// }
+export async function testChildGraph() {
+    const x = new GraphExecutor(mathFunctions);
+    const op = x.create("subtract", 10, 2);
+    const state = x.getNode(op);
+    await x.execute();
+    assert.equal(state.output, 8);
+}
 
-// export async function testChildGraph() {
-//     const x = new GraphExecutor(mathFunctions);
-//     const op = x.create("subtract", 10, 2);
-//     const state = x.getNode(op);
-//     await x.execute();
-//     assert.equal(state.output, 8);
-// }
+export async function testAddBooleans() {
+    const x = new GraphExecutor(mathFunctions);
+    const op = x.create("addBooleans", true, false);
+    const state = x.getNode(op);
+    await x.execute();
+    assert.equal(state.output, 1);
+}
 
-// export async function testAddBooleans() {
-//     const x = new GraphExecutor(mathFunctions);
-//     const op = x.create("addBooleans", true, false);
-//     const state = x.getNode(op);
-//     await x.execute();
-//     assert.equal(state.output, 1);
-// }
-
-// export async function testError() {
-//     const x = new GraphExecutor(mathFunctions);
-//     const op = x.create("throwError");
-//     const state = x.getNode(op);
-//     await assert.rejects(x.execute());
-//     assert.equal(state.state, GraphNodeState.Error);
-//     assert(state.error instanceof Error && state.error.message === "bad");
-// }
+export async function testError() {
+    const x = new GraphExecutor(mathFunctions);
+    const op = x.create("throwError");
+    const state = x.getNode(op);
+    await assert.rejects(x.execute());
+    assert.equal(state.state, GraphNodeState.Error);
+    assert(state.error instanceof Error && state.error.message === "bad");
+}

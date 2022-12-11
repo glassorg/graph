@@ -1,4 +1,4 @@
-import { GraphFunctions, GraphInputType, GraphOperation, GraphNodeID, GraphNodeOfOutputType, GraphReference, GraphOutputType, isGraphOperation, isGraphReference, GraphInputTypeOrNode } from "./GraphTypes";
+import { GraphFunctions, GraphInputType, GraphOperation, GraphNodeID, GraphOperationOfOutputType, GraphReference, GraphOutputType, isGraphOperation, isGraphReference, GraphInputTypesOrOperations } from "./GraphTypes";
 
 export enum GraphNodeState {
     NotStarted = "NotStarted",
@@ -54,7 +54,7 @@ export class GraphExecutor<GFS extends GraphFunctions> {
 
     public create<Type extends keyof GFS>(
         type: Type,
-        ...inputs: GraphInputTypeOrNode<GFS,GraphInputType<GFS,Type>> & any[]
+        ...inputs: GraphInputTypesOrOperations<GFS,GraphInputType<GFS,Type>> & any[]
     ): GraphOperation<GFS,Type> {
         const node = ({
             type,
@@ -112,7 +112,7 @@ export class GraphExecutor<GFS extends GraphFunctions> {
      * start execution of all operations which are not awaiting other operations.
      */
     private async executeFrame(finished: (value: boolean) => void, error: (e: any) => void) {
-        let DEBUG = false;
+        let DEBUG = true;
         if (this.areAllFinished()) {
             return finished(true);
         }
