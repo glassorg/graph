@@ -144,7 +144,7 @@ export class GraphExecutor<GFS extends GraphFunctions> {
                             }
                         }
                         if (DEBUG) {
-                            console.log("STATE", [...this.nodes.values()].map(o => String(o.operation.type) + " -> " + o.state));
+                            console.log("STATE", [...this.nodes.values()].map(o => JSON.stringify(o.operation).slice(0, 100) + " ... -> " + o.state));
                             console.log("Finished " + JSON.stringify(nodeState.operation.type));
                         }
                         this.executeFrame(finished, error);
