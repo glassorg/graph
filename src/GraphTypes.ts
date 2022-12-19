@@ -1,6 +1,5 @@
 
 //  Immutable values which can be JSON.stringified into a structurally unique string.
-type GraphData = null | boolean | number | string | GraphData[] | { [name: string]: GraphData };
 
 export type Simplify<T> = T extends Object ? { [K in keyof T]: T[K] } : T;
 export type StringKeyOf<T> = keyof T extends string ? keyof T : never;
@@ -8,8 +7,8 @@ export type StringKeyOf<T> = keyof T extends string ? keyof T : never;
 export type FunctionType<P extends unknown[],R> = (...p: P) => R;
 export type GraphFunctionID = string;
 export type GraphFunction<
-    Input extends GraphData[] = any[],
-    Output extends GraphData = any
+    Input extends any[] = any[],
+    Output = any
 > = FunctionType<Input, Promise<Output>>;
 export type GraphFunctions = { [name: GraphFunctionID]: GraphFunction };
 
@@ -18,7 +17,7 @@ export type GraphNodeOutput<T> = T extends GraphFunction<infer Input, infer Outp
 
 export type GraphNodeID = string;
 export type GraphReference<ID extends GraphNodeID = GraphNodeID> = { ref: ID };
-export type GraphInput = GraphData | GraphReference;
+export type GraphInput = any;
 
 export function isGraphReference(value: unknown) : value is GraphReference {
     const maybe = value as GraphReference | undefined; 

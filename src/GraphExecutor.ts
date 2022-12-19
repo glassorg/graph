@@ -36,12 +36,11 @@ function isIndependent<GFS extends GraphFunctions, Type extends StringKeyOf<GFS>
 
 export class GraphExecutor<GFS extends GraphFunctions> {
 
-    private readonly nodes = new Map<GraphNodeID, GraphExecutionNode<GFS>>();
+    public readonly nodes = new Map<GraphNodeID, GraphExecutionNode<GFS>>();
 
-    constructor(private readonly functions: GFS, graph: Graph<GFS>) {
-        // convert each element in the graph into an execution node
-        for (const [id, node] of Object.entries(graph)) {
-            this.nodes.set(id, new GraphExecutionNode(id, node));
+    constructor(private readonly functions: GFS, graph?: Graph<GFS>) {
+        if (graph) {
+            this.update(graph);
         }
     }
 
@@ -84,6 +83,14 @@ export class GraphExecutor<GFS extends GraphFunctions> {
 
     public getNodesByState(state: GraphExecutionNodeState): GraphExecutionNode<GFS>[] {
         return [...this.nodes.values()].filter(node => node.state === state);
+    }
+
+    public getNodesByType<Type extends StringKeyOf<GFS>>(type: Type): GraphExecutionNode<GFS,Type>[] {
+        return [...this.nodes.values()].filter(node => node.node.type === type) as GraphExecutionNode<GFS,Type>[];
+    }
+
+    public getOutputsByType<Type extends StringKeyOf<GFS>>(type: Type): GraphNodeOutput<GFS[Type]>[] {
+        return [...this.nodes.values()].filter(node => node.node.type === type).map(node => node.output!);
     }
 
     private getInputsIfFinished<Type extends StringKeyOf<GFS>>(node: GraphNode<GFS,Type>): GraphNodeInput<GFS[Type]> | undefined {
