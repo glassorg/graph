@@ -1,111 +1,44 @@
 
-//  new typing system.
-// type JSONValue = string | number | boolean | JSONValue[] | { [name: string]: JSONValue };
-
-type FunctionType<P extends unknown[],R> = (...p: P) => R;
-export type GraphFunction<Input extends unknown[], Output extends any = any> = FunctionType<Input,Promise<Output>>;
-
-export type GraphFunctions = { [name: string]: GraphFunction<any,any> }
-export type GraphNodeID = string;
-export interface GraphReference {
-    reference: GraphNodeID;
-}
-export function isGraphReference(value: unknown) : value is GraphReference {
-    const maybe = value as GraphReference | undefined; 
-    return typeof maybe?.reference === "string";
-}
+//  Immutable values which can be JSON.stringified into a structurally unique string.
+type GraphData = null | boolean | number | string | GraphData[] | { [name: string]: GraphData };
 
 export type Simplify<T> = T extends Object ? { [K in keyof T]: T[K] } : T;
+export type StringKeyOf<T> = keyof T extends string ? keyof T : never;
 
-export type GraphInputType<GFS extends GraphFunctions, Type extends keyof GFS> = GFS[Type] extends (...input: infer Input) => any ? Input : never;
-export type GraphOutputType<GFS extends GraphFunctions, Type extends keyof GFS> = GFS[Type] extends (...input: any) =>
-    Promise<infer Output>
-    ? (
-        true extends IsAny<Output>  //  the isAny check is to short-circuit an recursive GraphOperation check.
-        ? Output
-        : Output extends GraphOperation<infer OutputGFS, infer OutputType> ? GraphOutputType<OutputGFS,OutputType> : Output
-    )
-    : never;
+export type FunctionType<P extends unknown[],R> = (...p: P) => R;
+export type GraphFunctionID = string;
+export type GraphFunction<
+    Input extends GraphData[] = any[],
+    Output extends GraphData = any
+> = FunctionType<Input, Promise<Output>>;
+export type GraphFunctions = { [name: GraphFunctionID]: GraphFunction };
 
-type IfAny<T, Y, N> = 0 extends (1 & T) ? Y : N; 
-type IsAny<T> = IfAny<T, true, never>;
+export type GraphNodeInput<T> = T extends GraphFunction<infer Input, infer Output> ? Input : never;
+export type GraphNodeOutput<T> = T extends GraphFunction<infer Input, infer Output> ? Output : never;
 
-export interface GraphOperation<
-    GFS extends GraphFunctions = GraphFunctions,
-    Type extends keyof GFS = keyof GFS,
-    OutputType = GraphOutputType<GFS,Type>
-> {
+export type GraphNodeID = string;
+export type GraphReference<ID extends GraphNodeID = GraphNodeID> = { ref: ID };
+export type GraphInput = GraphData | GraphReference;
+
+export function isGraphReference(value: unknown) : value is GraphReference {
+    const maybe = value as GraphReference | undefined; 
+    return typeof maybe?.ref === "string";
+}
+
+export type GraphNode<GFS extends GraphFunctions, Type extends StringKeyOf<GFS> = StringKeyOf<GFS>>
+    = GraphNodeByTypeAndFunction<Type, GFS[Type]>;
+
+export type GraphNodeByTypeAndFunction<Type extends string, GF extends GraphFunction> = {
     type: Type;
-    inputs: GraphInputTypeOrReference<GraphInputType<GFS,Type>>
+    input: GraphInput[] & { [Index in keyof GraphNodeInput<GF>]: GraphNodeInput<GF>[Index] | GraphReference };
 }
+export type Graph<GFS extends GraphFunctions> = { [id: GraphNodeID]: GraphNode<GFS, StringKeyOf<GFS>> };
 
-export type GraphFunctionsOfOutputType<GFS extends GraphFunctions, OutputType> = Pick<GFS, {
-    [Key in keyof GFS]: GraphOutputType<GFS,Key> extends OutputType ? Key : never
-}[keyof GFS]>;
+export type StringKeysOfType<A,T> = ({ [Key in keyof A]: A[Key] extends T ? (Key extends string ? Key : never) : never })[keyof A];
 
-export type GraphOperationOfOutputType<GFS extends GraphFunctions, OutputType> =
-    GraphOperation<GraphFunctionsOfOutputType<GFS, OutputType>>;
+export type ValuesOrReference<A extends unknown[],G extends { [name: GraphNodeID]: any }>
+    = unknown[] & { [Key in keyof A]: A[Key] | GraphReference<StringKeysOfType<G,A[Key]>> }
 
-export function isGraphOperation(value: unknown) : value is GraphOperation {
-    const maybe = value as GraphOperation | undefined;
-    return maybe != null && typeof maybe.type === "string" && typeof maybe.inputs === "object";
+export function defineGraphFunctions<GF extends GraphFunctions>(gf: GF): GF {
+    return gf;
 }
-
-export type GraphInputTypesOrOperations<GFS extends GraphFunctions, InputType extends any[]> = {
-    [Name in keyof InputType]: InputType[Name] | GraphOperationOfOutputType<GFS,InputType[Name]>
-} & any[];
-
-export type GraphOperationByTypeAndFunc<Type, Func> = Func extends GraphFunction<infer Input, infer Output> ? {
-    type: Type,
-    inputs: GraphInputTypeOrReference<Input>
-} : never;
-
-export type GraphInputTypeOrReference<InputType extends any[]> = {
-    [Name in keyof InputType]: InputType[Name] | GraphReference
-}
-
-export type CreateOperation<GFS extends GraphFunctions> = 
-    <Type extends keyof GFS>(
-        type: Type,
-        ...inputs: GraphInputTypesOrOperations<GFS,GraphInputType<GFS,Type>> & any[]
-    ) => GraphOperation<Simplify<Pick<Simplify<GFS>,Type>>,Type>
-
-export type GraphFunctionReturnType<GF> = GF extends GraphFunction<infer Input, infer Output> ? Output : never;
-
-type Values<T> = T[keyof T];
-
-type GraphOperations<GFS extends GraphFunctions> = Simplify<Values<{
-    [Key in keyof GFS]: GraphOperationByTypeAndFunc<Key, GFS[Key]>
-}>>
-
-type ExtendReturn<Func,AddReturn> = Func extends GraphFunction<infer Input, infer Output> ? GraphFunction<Input, Output | AddReturn> : never;
-type GraphFunctionImplementations<GFS extends GraphFunctions> = {
-    [Key in keyof GFS]: ExtendReturn<
-        GFS[Key],
-        GraphOperations<GraphFunctionsOfOutputType<GFS, GraphFunctionReturnType<GFS[Key]>>>
-    >
-}
-
-type ToPromiseFunctions<GFS> = {
-    [Key in keyof GFS]: GFS[Key] extends FunctionType<infer I, infer O> ? FunctionType<I,Promise<O>> : never
-}
-
-export function createGraphFunctions<GFS extends { [name in keyof GFS]: FunctionType<any[],any> }>(callback: (op: CreateOperation<ToPromiseFunctions<GFS>>) => GraphFunctionImplementations<ToPromiseFunctions<GFS>>): ToPromiseFunctions<GFS> {
-    return callback(
-        <Type extends keyof GFS>(type: Type, ...inputs: GraphInputTypesOrOperations<ToPromiseFunctions<GFS>, GraphInputType<ToPromiseFunctions<GFS>, Type>>): any => {
-            return { type, inputs } as GraphOperationByTypeAndFunc<Type, ToPromiseFunctions<GFS>[Type]>;
-        }
-    ) as unknown as ToPromiseFunctions<GFS>;
-}
-
-// test create graph functions
-createGraphFunctions<{
-    add(left: number, right: number): number,
-    negate(value: number): number,
-    subtract(left: number, right: number): number,
-}>(op => ({
-    add: async (left, right) => left + right,
-    negate: async (value) => - value,
-    subtract: async (left, right) => op("add", left, op("negate", right))
-}));
-

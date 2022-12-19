@@ -1,60 +1,69 @@
-// import { strict as assert } from "assert";
+import { strict as assert } from "assert";
+import { GraphBuilder } from "./GraphBuilder";
+import { GraphExecutionNodeState, GraphExecutor } from "./GraphExecutor";
+import { defineGraphFunctions } from "./GraphTypes";
 
-// import { GraphNodeState, GraphExecutor } from "./GraphExecutor";
-// import { createGraphFunctions } from "./GraphTypes";
+let count = 0;
+function inc(value: number) {
+    count += value;
+    return true;
+}
 
-// const mathFunctions = createGraphFunctions<{
-//     add(left: number, right: number): number,
-//     addBooleans(left: boolean, right: boolean): number,
-//     negate(value: number): number,
-//     min(...values: number[]): number,
-//     minNegate(...values: number[]): number,
-//     throwError(): number,
-//     getString(): string,
-//     subtract(left: number, right: number): number,
-// }>(op => ({
-//     add: async (left, right) => left + right,
-//     addBooleans: async (left, right) => Number(left) + Number(right),
-//     negate: async (value) => - value,
-//     min: async (...values) => Math.min(...values),
-//     minNegate: async (...values) => op("min", ...values.map(value => op("negate", value))),
-//     throwError: async () => { throw new Error("bad") },
-//     getString: async () => "string",
-//     subtract: async (left, right) => op("add", left, op("negate", right))
-// }));
+const mathFunctions = defineGraphFunctions({
+    add: async (left, right) => (inc(1), left + right),
+    negate: async (value) => (inc(10), - value),
+    min: async (...values) => (inc(100), Math.min(...values)),
+    throwError: async () => { throw new Error("bad") },
+});
 
-// export async function testExecutor() {
-//     const x = new GraphExecutor(mathFunctions);
-//     const op = x.create("add",
-//         x.create("negate", 1),
-//         x.create("min", 2, 4, 8, 4, 12)
-//     );
-//     const state = x.getNode(op);
-//     await x.execute();
-//     assert.equal(state.output, 1);
-// }
+export async function testExecutor() {
+    count = 0;
+    const x = new GraphExecutor(mathFunctions, new GraphBuilder<typeof mathFunctions>({})
+        .append("a", "negate", 1)
+        .append("b", "min", 2, 4, 8, 4, 12)
+        .append("c", "add", { ref: "a" }, { ref: "b" })
+        .build()
+    );
+    await x.execute();
+    assert.equal(count, 111);
+    const state = x.getNode("c");
+    assert.equal(state.output, 1);
+    // test re-execution
+    x.update(new GraphBuilder<typeof mathFunctions>({})
+        .append("a", "negate", 1)
+        .append("b", "min", 2, 4, 8, 4, 100)
+        .append("c", "add", { ref: "a" }, { ref: "b" })
+        .build()
+    );
+    assert.equal(x.getNode("a").state, GraphExecutionNodeState.NotStarted);
+    assert.equal(x.getNode("b").state, GraphExecutionNodeState.NotStarted);
+    assert.equal(x.getNode("c").state, GraphExecutionNodeState.NotStarted);
+    assert(x.getNode("a").input != null);
+    assert(x.getNode("b").input == null);
+    assert(x.getNode("c").input != null);
+    count = 0;
+    await x.execute();
+    assert.equal(count, 100);
+    // do it again with actual changes
+    x.update(new GraphBuilder<typeof mathFunctions>({})
+        .append("a", "negate", 1)
+        .append("b", "min", 2, -1)
+        .append("c", "add", { ref: "a" }, { ref: "b" })
+        .build()
+    );
+    count = 0;
+    await x.execute();
+    assert.equal(count, 101);
+}
 
-// export async function testChildGraph() {
-//     const x = new GraphExecutor(mathFunctions);
-//     const op = x.create("subtract", 10, 2);
-//     const state = x.getNode(op);
-//     await x.execute();
-//     assert.equal(state.output, 8);
-// }
+export async function testError() {
+    const graph = new GraphBuilder<typeof mathFunctions>({})
+        .append("a", "throwError")
+        .build();
 
-// export async function testAddBooleans() {
-//     const x = new GraphExecutor(mathFunctions);
-//     const op = x.create("addBooleans", true, false);
-//     const state = x.getNode(op);
-//     await x.execute();
-//     assert.equal(state.output, 1);
-// }
-
-// export async function testError() {
-//     const x = new GraphExecutor(mathFunctions);
-//     const op = x.create("throwError");
-//     const state = x.getNode(op);
-//     await assert.rejects(x.execute());
-//     assert.equal(state.state, GraphNodeState.Error);
-//     assert(state.error instanceof Error && state.error.message === "bad");
-// }
+    const x = new GraphExecutor(mathFunctions, graph);
+    await assert.rejects(x.execute());
+    const node = x.getNode("a");
+    assert.equal(node.state, GraphExecutionNodeState.Error);
+    assert(node.error instanceof Error && node.error.message === "bad");
+}
