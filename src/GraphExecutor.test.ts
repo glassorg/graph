@@ -10,18 +10,22 @@ function inc(value: number) {
 }
 
 const mathFunctions = defineGraphFunctions({
-    add: async (left, right) => (inc(1), left + right),
-    negate: async (value) => (inc(10), - value),
-    min: async (...values) => (inc(100), Math.min(...values)),
+    string: async () => "foo",
+    add: async (left: number, right: number) => (inc(1), left + right),
+    negate: async (value: number) => (inc(10), - value),
+    min: async (...values: number[]) => (inc(100), Math.min(...values)),
+    concat: async (a: string, b: string) => a + b,
     throwError: async () => { throw new Error("bad") },
 });
 
 export async function testExecutor() {
     count = 0;
     const x = new GraphExecutor(mathFunctions, new GraphBuilder<typeof mathFunctions>({})
+        .append("s", "string")
         .append("a", "negate", 1)
         .append("b", "min", 2, 4, 8, 4, 12)
-        .append("c", "add", { ref: "a" }, { ref: "b" })
+        .append("c", "add", { ref: "b" }, { ref: "b" })
+        .append("concatted", "concat", { ref: "s" }, { ref: "s" })
         .build()
     );
     await x.execute();

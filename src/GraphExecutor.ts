@@ -1,3 +1,4 @@
+import { GraphBuilder } from "./GraphBuilder";
 import { Graph, GraphFunctions, GraphNode, GraphNodeID, GraphNodeInput, GraphNodeOutput, isGraphReference, StringKeyOf } from "./GraphTypes";
 
 export enum GraphExecutionNodeState {
@@ -20,6 +21,10 @@ export class GraphExecutionNode<GFS extends GraphFunctions, Type extends StringK
         this.id = id;
         this.node = node;
     }
+}
+
+export function equals(a: any, b: any) {
+    return a === b || JSON.stringify(a) === JSON.stringify(b);
 }
 
 /**
@@ -45,6 +50,13 @@ export class GraphExecutor<GFS extends GraphFunctions> {
     }
 
     /**
+     * @returns a new empty GraphBuilder with the same GraphFunctions type.
+     */
+    builder() {
+        return new GraphBuilder<GFS>({});
+    }
+
+    /**
      * Updates the execution graph while retaining all previous calculations.
      * This allows a second execution to take place much more quickly.
      */
@@ -53,7 +65,7 @@ export class GraphExecutor<GFS extends GraphFunctions> {
         for (const [id, node] of Object.entries(graph)) {
             const previous = this.nodes.get(id);
             if (previous) {
-                if (JSON.stringify(node) !== JSON.stringify(previous.node)) {
+                if (equals(node, previous.node)) {
                     previous.node = node;
                     // hard reset this node by deleting the previous inputs.
                     previous.input = undefined;
@@ -136,7 +148,7 @@ export class GraphExecutor<GFS extends GraphFunctions> {
      * start execution of all operations which are not awaiting other operations.
      */
     private async executeFrame(finished: (value: boolean) => void, error: (e: any) => void) {
-        let DEBUG = true;
+        let DEBUG = false;
         if (this.areAllFinished()) {
             return finished(true);
         }
@@ -167,7 +179,7 @@ export class GraphExecutor<GFS extends GraphFunctions> {
                             dependent.node.input.forEach((arg, index) => {
                                 if (dependent.input) {
                                     if (isGraphReference(arg) && arg.ref === node.id) {
-                                        const changed = JSON.stringify(dependent.input[index]) !== JSON.stringify(node.output);
+                                        const changed = equals(dependent.input[index],node.output);
                                         if (changed) {
                                             // delete the dependent input which forces a new execution since input has changed.
                                             dependent.input = undefined;
@@ -177,7 +189,7 @@ export class GraphExecutor<GFS extends GraphFunctions> {
                             });
                         }
                         if (DEBUG) {
-                            console.log("STATE", [...this.nodes.values()].map(o => JSON.stringify({ id: node.id, type: node.node.type, input: node.input }).slice(0, 100) + " ... -> " + o.state));
+                            console.log("STATE", [...this.nodes.values()].map(o => JSON.stringify({ input: o.node.input, id: o.id, type: o.node.type  }).slice(0, 140) + " ... -> " + o.state));
                             console.log("Finished " + JSON.stringify(node.node.type));
                         }
                         this.executeFrame(finished, error);

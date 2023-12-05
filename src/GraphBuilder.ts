@@ -1,4 +1,14 @@
-import { Graph, GraphFunctions, GraphNodeID, GraphNodeInput, GraphNodeOutput, Simplify, StringKeyOf, ValuesOrReference } from "./GraphTypes";
+import { Graph, GraphFunctions, GraphNode, GraphNodeID, GraphNodeInput, GraphNodeOutput, isGraphReference, Simplify, StringKeyOf, ValuesOrReference } from "./GraphTypes";
+
+export class CircularReferenceError extends Error {
+
+    constructor(
+        public readonly path: GraphNodeID[],
+    ) {
+        super(`Circular reference ${path.join(` => `)}`);
+    }
+
+}
 
 export class GraphBuilder<GFS extends GraphFunctions, G extends { [name: GraphNodeID]: any; } = {}> {
     constructor(private readonly graph: Graph<GFS>) {
@@ -20,8 +30,26 @@ export class GraphBuilder<GFS extends GraphFunctions, G extends { [name: GraphNo
         }>>;
     }
 
+    checkForCircularReferences(currentID: GraphNodeID, path: GraphNodeID[] = [], originalID = currentID) {
+        path.push(currentID);
+        const current = this.graph[currentID];
+        for (const arg of current.input) {
+            if (isGraphReference(arg)) {
+                const { ref } = arg;
+                if (ref === originalID) {
+                    throw new CircularReferenceError([...path, ref]);
+                }
+                this.checkForCircularReferences(ref, path, originalID);
+            }
+        }
+        path.pop();
+    }
+
     build(): Graph<GFS> {
-        //  TODO: Check for circular graph dependencies and throw error if found.
+        // check for circular references
+        for (const id of Object.keys(this.graph)) {
+            this.checkForCircularReferences(id);
+        }
         return { ...this.graph };
     }
 }

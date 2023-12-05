@@ -41,3 +41,6 @@ export type ValuesOrReference<A extends unknown[],G extends { [name: GraphNodeID
 export function defineGraphFunctions<GF extends GraphFunctions>(gf: GF): GF {
     return gf;
 }
+
+type Foo = { a: number, b: string, c: number }
+type Bar = StringKeysOfType<Foo, number>
