@@ -1,6 +1,6 @@
 {
   "name": "@glas/graph",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Generalized dependency graph creation and execution suitable for parallel execution in worker threads",
   "main": "lib/index.js",
   "scripts": {
